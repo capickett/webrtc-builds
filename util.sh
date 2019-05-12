@@ -13,14 +13,6 @@ function detect-platform() {
   esac
 }
 
-# Cleanup the output directory.
-#
-# $1: The output directory.
-function clean() {
-  local outdir="$1"
-  rm -rf $outdir/* $outdir/.gclient*
-}
-
 # Make sure depot tools are present.
 #
 # $1: The platform type.
@@ -67,44 +59,6 @@ function has-binary () {
   type "$1" &> /dev/null ;
 }
 
-# Setup Visual Studio build environment variables.
-function init-msenv() {
-
-  # Rudimentary support for VS2017 in default install location due to
-  # lack of VS1S0COMNTOOLS environment variable.
-  if [ -d "C:/Program Files (x86)/Microsoft Visual Studio/2017/Community/VC/Auxiliary/Build" ]; then
-    vcvars_path="C:/Program Files (x86)/Microsoft Visual Studio/2017/Community/VC/Auxiliary/Build"
-  elif [ ! -z "$VS140COMNTOOLS" ]; then
-    vcvars_path="${VS140COMNTOOLS}../../VC"
-  else
-    echo "Building under Microsoft Windows requires Microsoft Visual Studio 2015 Update 3"
-    exit 1
-  fi
-
-  export DEPOT_TOOLS_WIN_TOOLCHAIN=0
-  pushd "$vcvars_path" >/dev/null
-    OLDIFS=$IFS
-    IFS=$'\n'
-    msvars=$(cmd //c "vcvarsall.bat $TARGET_CPU && set")
-
-    for line in $msvars; do
-      case $line in
-      INCLUDE=*|LIB=*|LIBPATH=*)
-        export $line ;;
-      PATH=*)
-        PATH=$(echo $line | sed \
-          -e 's/PATH=//' \
-          -e 's/\([a-zA-Z]\):[\\\/]/\/\1\//g' \
-          -e 's/\\/\//g' \
-          -e 's/;\//:\//g'):$PATH
-        export PATH
-        ;;
-      esac
-    done
-    IFS=$OLDIFS
-  popd >/dev/null
-}
-
 # Make sure all build dependencies are present and platform specific
 # environment variables are set.
 #
@@ -132,35 +86,6 @@ function check::build::env() {
     ensure-package python
     ensure-package lbzip2
     ensure-package lsb-release lsb_release
-    ;;
-  win)
-    init-msenv
-
-    # Required programs that may be missing on Windows
-    # TODO: check before running platform specific commands
-    REQUIRED_PROGS=(
-      bash
-      sed
-      git
-      openssl
-      find
-      grep
-      xargs
-      pwd
-      curl
-      rm
-      cat
-      # strings
-    )
-
-    # Check that required programs exist on the system.
-    # If they are missing, we abort.
-    for f in "${REQUIRED_PROGS[@]}" ; do
-      if ! has-binary "$f" ; then
-        echo "Error: '$f' is not installed." >&2
-        exit 1
-      fi
-    done
     ;;
   esac
 }
@@ -232,33 +157,6 @@ function checkout() {
   popd >/dev/null
 }
 
-# Patch a checkout for before building libraries.
-#
-# $1: The platform type.
-# $2: The output directory.
-function patch() {
-  local platform="$1"
-  local outdir="$2"
-
-  pushd $outdir/src >/dev/null
-    # This removes the examples from being built.
-    sed -i.bak 's|"//webrtc/examples",|#"//webrtc/examples",|' BUILD.gn
-
-    # This patches a GN error with the video_loopback executable depending on a
-    # test but since we disable building tests GN detects a dependency error.
-    # Replacing the outer conditional with 'rtc_include_tests' works around this.
-    # sed -i.bak 's|if (!build_with_chromium)|if (rtc_include_tests)|' webrtc/BUILD.gn
-
-    # Enable RTTI if required by removing the 'no_rtti' compiler flag.
-    # This fixes issues when compiling WebRTC with other libraries that have RTTI enabled.
-    # if [ $ENABLE_RTTI = 1 ]; then
-    #   echo "Enabling RTTI"
-    #   sed -i.bak 's|"//build/config/compiler:no_rtti",|#"//build/config/compiler:no_rtti",|' \
-    #     build/config/BUILDCONFIG.gn
-    # fi
-  popd >/dev/null
-}
-
 # Compile using ninja.
 #
 # $1 The output directory, 'out/$TARGET_CPU/Debug', or 'out/$TARGET_CPU/Release'
@@ -270,130 +168,7 @@ function compile::ninja() {
   echo "Generating project files with: $gn_args"
   gn gen $outputdir --args="$gn_args"
   pushd $outputdir >/dev/null
-    # ninja -v -C  .
     ninja -C  .
-  popd >/dev/null
-}
-
-# Combine build artifact objects into one library.
-#
-# The Microsoft Windows tools use different file extensions than the other tools:
-# '.obj' as the object file extension, instead of '.o'
-# '.lib' as the static library file extension, instead of '.a'
-# '.dll' as the shared library file extension, instead of '.so'
-#
-# The Microsoft Windows tools have different names than the other tools:
-# 'lib' as the librarian, instead of 'ar'. 'lib' must be found through the path
-# variable $VS140COMNTOOLS.
-#
-# $1: The platform
-# $2: The list of object file paths to be combined
-# $3: The output library name
-function combine::objects() {
-  local platform="$1"
-  local outputdir="$2"
-  local libname="libwebrtc_full"
-
-  # if [ $platform = 'win' ]; then
-  #   local extname='obj'
-  # else
-  #   local extname='o'
-  # fi
-
-  pushd $outputdir >/dev/null
-    rm -f $libname.*
-
-    # Prevent blacklisted objects such as ones containing a main function from
-    # being combined.
-    # Blacklist objects from video_capture_external and device_info_external so
-    # that the internal video capture module implementations get linked.
-    # unittest_main because it has a main function defined.
-    local blacklist="unittest|examples|tools|yasm/|protobuf_lite|main.o|video_capture_external.o|device_info_external.o"
-
-    # Method 1: Collect all .o files from .ninja_deps and some missing intrinsics
-    local objlist=$(strings .ninja_deps | grep -o ".*\.o")
-    local extras=$(find \
-      obj/third_party/libvpx/libvpx_* \
-      obj/third_party/libjpeg_turbo/simd_asm \
-      obj/third_party/boringssl/boringssl_asm -name "*\.o")
-    echo "$objlist" | tr ' ' '\n' | grep -v -E $blacklist >$libname.list
-    echo "$extras" | tr ' ' '\n' | grep -v -E $blacklist >>$libname.list
-
-    # Method 2: Collect all .o files from output directory
-    # local objlist=$(find . -name '*.o' | grep -v -E $blacklist)
-    # echo "$objlist" >$libname.list
-
-    # Combine all objects into one static library
-    case $platform in
-    win)
-      # TODO: Support VS 2017
-      "$VS140COMNTOOLS../../VC/bin/lib" /OUT:$libname.lib @$libname.list
-      ;;
-    *)
-      # Combine *.o objects using ar
-      cat $libname.list | xargs ar -crs $libname.a
-
-      # Combine *.o objects into a thin library using ar
-      # cat $libname.list | xargs ar -ccT $libname.a
-
-      ranlib $libname.a
-      ;;
-    esac
-  popd >/dev/null
-}
-
-# Combine built static libraries into one library.
-#
-# NOTE: This method is currently preferred since combining .o objects is
-# causing undefined references to libvpx intrinsics on both Linux and Windows.
-#
-# The Microsoft Windows tools use different file extensions than the other tools:
-# '.obj' as the object file extension, instead of '.o'
-# '.lib' as the static library file extension, instead of '.a'
-# '.dll' as the shared library file extension, instead of '.so'
-#
-# The Microsoft Windows tools have different names than the other tools:
-# 'lib' as the librarian, instead of 'ar'. 'lib' must be found through the path
-# variable $VS140COMNTOOLS.
-#
-# $1: The platform
-# $2: The list of object file paths to be combined
-# $3: The output library name
-function combine::static() {
-  local platform="$1"
-  local outputdir="$2"
-  local libname="$3"
-
-  echo $libname
-  pushd $outputdir >/dev/null
-    rm -f $libname.*
-
-    # Find only the libraries we need
-    if [ $platform = 'win' ]; then
-      local whitelist="boringssl.dll.lib|protobuf_lite.dll.lib|webrtc\.lib|field_trial_default.lib|metrics_default.lib"
-    else
-      local whitelist="boringssl\.a|protobuf_full\.a|webrtc\.a|field_trial_default\.a|metrics_default\.a"
-    fi
-    cat .ninja_log | tr '\t' '\n' | grep -E $whitelist | sort -u >$libname.list
-
-    # Combine all objects into one static library
-    case $platform in
-    win)
-      # TODO: Support VS 2017
-      "$VS140COMNTOOLS../../VC/bin/lib" /OUT:$libname.lib @$libname.list
-      ;;
-    *)
-      # Combine *.a static libraries
-      echo "CREATE $libname.a" >$libname.ar
-      while read a; do
-        echo "ADDLIB $a" >>$libname.ar
-      done <$libname.list
-      echo "SAVE" >>$libname.ar
-      echo "END" >>$libname.ar
-      ar -M < $libname.ar
-      ranlib $libname.a
-      ;;
-    esac
   popd >/dev/null
 }
 
@@ -407,52 +182,37 @@ function compile() {
   local target_os="$3"
   local target_cpu="$4"
   local configs="$5"
-  local blacklist="$5"
 
-  # Set default default common  and target args.
+  # Set default default common and target args.
   # `rtc_include_tests=false`: Disable all unit tests
   # `treat_warnings_as_errors=false`: Don't error out on compiler warnings
   local common_args="rtc_include_tests=false treat_warnings_as_errors=false"
   local target_args="target_os=\"$target_os\" target_cpu=\"$target_cpu\""
 
   # Build WebRTC with RTII enbled.
-  [ $ENABLE_RTTI = 1 ] && common_args+=" use_rtti=true"
+  common_args+=" use_rtti=true"
+
+  # Disable examples.
+  common_args+=" rtc_build_examples=false"
+
+  # Disable building tools.
+  common_args+=" rtc_build_tools=false"
 
   # Static vs Dynamic CRT: When `is_component_build` is false static CTR will be
   # enforced.By default Debug builds are dynamic and Release builds are static.
-  [ $ENABLE_STATIC_LIBS = 1 ] && common_args+=" is_component_build=false"
+  common_args+=" is_component_build=false"
 
   # `enable_iterator_debugging=false`: Disable libstdc++ debugging facilities
   # unless all your compiled applications and dependencies define _GLIBCXX_DEBUG=1.
   # This will cause errors like: undefined reference to `non-virtual thunk to
   # cricket::VideoCapturer::AddOrUpdateSink(rtc::VideoSinkInterface<webrtc::VideoFrame>*,
   # rtc::VideoSinkWants const&)'
-  [ $ENABLE_ITERATOR_DEBUGGING = 0 ] && common_args+=" enable_iterator_debugging=false"
-
-  # Use clang or gcc to compile WebRTC.
-  # The default compiler used by Chromium/WebRTC is clang, so there are frequent
-  # bugs and incompatabilities with gcc, especially with newer versions >= 4.8.
-  # Use gcc at your own risk, but it may be necessary if your compiler doesn't
-  # like the clang compiled libraries, so the option is there.
-  # Set `is_clang=false` and `use_sysroot=false` to build using gcc.
-  if [ $ENABLE_CLANG = 0 ]; then
-    common_args+=" is_clang=false"
-    [ $platform = 'linux' ] && common_args+=" use_sysroot=false linux_use_bundled_binutils=false use_custom_libcxx=false use_custom_libcxx_for_host=false"
-  fi
+  common_args+=" enable_iterator_debugging=false"
 
   pushd $outdir/src >/dev/null
     for cfg in $configs; do
       [ "$cfg" = 'Release' ] && common_args+=' is_debug=false strip_debug_info=true symbol_level=0'
       compile::ninja "out/$target_cpu/$cfg" "$common_args $target_args"
-
-      if [ $COMBINE_LIBRARIES = 1 ]; then
-        # Method 1: Merge the static .a/.lib libraries.
-        combine::static $platform "out/$target_cpu/$cfg" libwebrtc_full
-        
-        # Method 2: Merge .o/.obj objects to create the library, although results 
-        # have been inconsistent so the static merging method is default.
-        # combine::objects $platform "out/$target_cpu/$cfg" libwebrtc_full
-      fi 
     done
   popd >/dev/null
 }
@@ -472,7 +232,7 @@ function package::prepare() {
   local resource_dir="$4"
   local configs="$5"
   local revision_number="$6"
-  
+
   if [ $platform = 'mac' ]; then
     CP='gcp'
   else
@@ -486,18 +246,14 @@ function package::prepare() {
     pushd src >/dev/null
 
       # Find and copy header files
-      local header_source_dir=webrtc
-      
-      # Revision 19846 moved src/webrtc to src/
-      # https://webrtc.googlesource.com/src/+/92ea95e34af5966555903026f45164afbd7e2088
-      [ $revision_number -ge 19846 ] && header_source_dir=.
+      local header_source_dir=.
 
       # Copy header files, skip third_party dir
       find $header_source_dir -path './third_party' -prune -o -type f \( -name '*.h' \) -print | \
         xargs -I '{}' $CP --parents '{}' $outdir/$package_filename/include
-        
+
       # Find and copy dependencies
-      # The following build dependencies were excluded: 
+      # The following build dependencies were excluded:
       # gflags, ffmpeg, openh264, openmax_dl, winsdk_samples, yasm
       find $header_source_dir -name '*.h' -o -name README -o -name LICENSE -o -name COPYING | \
         grep './third_party' | \
@@ -511,15 +267,9 @@ function package::prepare() {
       mkdir -p $package_filename/lib/$TARGET_CPU/$cfg
       pushd src/out/$TARGET_CPU/$cfg >/dev/null
         mkdir -p $outdir/$package_filename/lib/$TARGET_CPU/$cfg
-        if [ $COMBINE_LIBRARIES = 1 ]; then
-          find . -name '*.so' -o -name '*.dll' -o -name '*.lib' -o -name '*.a' -o -name '*.jar' | \
-            grep -E 'webrtc_full' | \
-            xargs -I '{}' $CP '{}' $outdir/$package_filename/lib/$TARGET_CPU/$cfg
-        else
-          find . -name '*.so' -o -name '*.dll' -o -name '*.lib' -o -name '*.a' -o -name '*.jar' | \
-            grep -E 'webrtc\.|boringssl|protobuf|system_wrappers' | \
-            xargs -I '{}' $CP '{}' $outdir/$package_filename/lib/$TARGET_CPU/$cfg
-        fi
+        find . -name '*.so' -o -name '*.dll' -o -name '*.lib' -o -name '*.a' -o -name '*.jar' | \
+          grep -E 'webrtc\.|boringssl|protobuf|system_wrappers' | \
+          xargs -I '{}' $CP '{}' $outdir/$package_filename/lib/$TARGET_CPU/$cfg
       popd >/dev/null
     done
 
@@ -549,9 +299,9 @@ function package::archive() {
   else
     OUTFILE=$package_filename.tar.gz #.tar.bz2
   fi
-  
+
   pushd $outdir >/dev/null
-  
+
     # Archive the package
     rm -f $OUTFILE
     pushd $package_filename >/dev/null
@@ -563,42 +313,7 @@ function package::archive() {
         # zip -r $package_filename.zip $package_filename >/dev/null
       fi
     popd >/dev/null
-  
-  popd >/dev/null
-}
 
-# This packages into a debian package in the output directory.
-# $1: The output directory.
-# $2: The package filename.
-# $3: The package name.
-# $4: The package version.
-# $5: The architecture.
-function package::debian() {
-  local outdir="$1"
-  local package_filename="$2"
-  local package_name="$3"
-  local package_version="$4"
-  local arch="$5"
-  local debianize="debianize/$package_filename"
-
-  echo "Debianize WebRTC"
-  pushd $outdir >/dev/null
-  mkdir -p $debianize/DEBIAN
-  mkdir -p $debianize/opt
-  mv $package_filename $debianize/opt/webrtc
-  cat << EOF > $debianize/DEBIAN/control
-Package: $package_name
-Architecture: $arch
-Maintainer: Sourcey
-Depends: debconf (>= 0.5.00)
-Priority: optional
-Version: $package_version
-Description: webrtc static library
- This package provides webrtc library generated with webrtcbuilds
-EOF
-  fakeroot dpkg-deb --build $debianize
-  mv debianize/*.deb .
-  rm -rf debianize
   popd >/dev/null
 }
 
@@ -634,26 +349,6 @@ function package::manifest() {
   "target_cpu": "${TARGET_CPU}"
 }
 EOF
-
-  # # Merge JSON manifests
-  # # node manifest.js
-  # rm -f manifest.json
-  # echo '[' > manifest.json
-  # files=(*.json)
-  # (
-  #   set -- "${files[@]}"
-  #   until (( $# == 1 )); do
-  #     if [ ! $1 = 'manifest.json' ]; then
-  #       cat $1 >> manifest.json
-  #       echo ',' >> manifest.json
-  #     fi
-  #     shift
-  #   done
-  #   cat $1 >> manifest.json
-  # )
-  # sed -i ':a;N;$!ba;s/\n//g' manifest.json
-  # sed -i 's/{/\n  {/g' manifest.json
-  # echo ']' >> manifest.json
 
   popd >/dev/null
 }
