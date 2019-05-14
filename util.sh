@@ -189,8 +189,7 @@ function package::prepare() {
   local platform="$1"
   local outdir="$2"
   local package_filename="$3"
-  local resource_dir="$4"
-  local configs="$5"
+  local configs="$4"
 
   if [ $platform = 'mac' ]; then
     CP='gcp'
