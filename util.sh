@@ -101,7 +101,8 @@ function checkout() {
   pushd $outdir >/dev/null
   # Fetch only the first-time, otherwise sync.
   if [ ! -d src ]; then
-    fetch --nohooks webrtc
+    echo Missing source directory
+    exit 1
   fi
 
   # Remove all unstaged files that can break gclient sync
@@ -190,7 +191,6 @@ function package::prepare() {
   local package_filename="$3"
   local resource_dir="$4"
   local configs="$5"
-  local revision_number="$6"
 
   if [ $platform = 'mac' ]; then
     CP='gcp'
