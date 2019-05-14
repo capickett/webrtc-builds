@@ -25,7 +25,7 @@ OPTIONS:
 EOF
 }
 
-while getopts :o:b:r:t:c:l:e:n:xDd OPTION; do
+while getopts :o:b:d:xDv OPTION; do
   case $OPTION in
   o) OUTDIR=$OPTARG ;;
   b) BRANCH=$OPTARG ;;
@@ -41,6 +41,7 @@ DEBUG=${DEBUG:-0}
 CONFIGS=${CONFIGS:-Debug Release}
 PACKAGE_FILENAME_PATTERN=${PACKAGE_FILENAME_PATTERN:-"webrtc-%sr%-%to%-%tc%"}
 REPO_URL="https://webrtc.googlesource.com/src"
+DEPOT_TOOLS_DIR=${DEPOT_TOOLS_DIR:-depot_tools}
 PATH=$DEPOT_TOOLS_DIR:$DEPOT_TOOLS_DIR/python276_bin:$PATH
 
 [ "$DEBUG" = 1 ] && set -x
