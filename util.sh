@@ -19,18 +19,11 @@ function detect-platform() {
 # $2: The depot tools url.
 # $3: The depot tools directory.
 function check::depot-tools() {
-  local platform="$1"
-  local depot_tools_url="$2"
-  local depot_tools_dir="$3"
+  local depot_tools_dir="$1"
 
   if [ ! -d $depot_tools_dir ]; then
-    git clone -q $depot_tools_url $depot_tools_dir
-    if [ $platform = 'win' ]; then
-      # run gclient.bat to get python
-      pushd $depot_tools_dir >/dev/null
-      ./gclient.bat
-      popd >/dev/null
-    fi
+    echo "Could not find depot_tools at $depot_tools_dir"
+    exit 1
   else
     pushd $depot_tools_dir >/dev/null
       git reset --hard -q
@@ -49,14 +42,6 @@ function ensure-package() {
     sudo apt-get update -qq
     sudo apt-get install -y $name
   fi
-}
-
-# Check if any of the arguments is executable (logical OR condition).
-# Using plain "type" without any option because has-binary is intended
-# to know if there is a program that one can call regardless if it is
-# an alias, builtin, function, or a disk file that would be executed.
-function has-binary () {
-  type "$1" &> /dev/null ;
 }
 
 # Make sure all build dependencies are present and platform specific
@@ -95,7 +80,6 @@ function check::build::env() {
 function check::webrtc::deps() {
   local platform="$1"
   local outdir="$2"
-  local target_os="$3"
 
   case $platform in
   linux)
@@ -104,42 +88,20 @@ function check::webrtc::deps() {
     sudo $outdir/src/build/install-build-deps.sh --no-syms --no-arm --no-chromeos-fonts --no-nacl --no-prompt
     ;;
   esac
-
-  if [ $target_os = 'android' ]; then
-    sudo $outdir/src/build/install-build-deps-android.sh
-  fi
 }
 
 # Check out a specific revision.
 #
-# $1: The target OS type.
-# $2: The output directory.
-# $3: Revision represented as a git SHA.
+# $1: The output directory.
+# $2: Revision represented as a git SHA.
 function checkout() {
-  local target_os="$1"
-  local outdir="$2"
-  local revision="$3"
+  local outdir="$1"
+  local revision="$2"
 
   pushd $outdir >/dev/null
-  local prev_target_os=$(cat $outdir/.webrtcbuilds_target_os 2>/dev/null)
-  if [[ -n "$prev_target_os" && "$target_os" != "$prev_target_os" ]]; then
-    echo The target OS has changed. Refetching sources for the new target OS
-    rm -rf src .gclient*
-  fi
-
   # Fetch only the first-time, otherwise sync.
   if [ ! -d src ]; then
-    case $target_os in
-    android)
-      yes | fetch --nohooks webrtc_android
-      ;;
-    ios)
-      fetch --nohooks webrtc_ios
-      ;;
-    *)
-      fetch --nohooks webrtc
-      ;;
-    esac
+    fetch --nohooks webrtc
   fi
 
   # Remove all unstaged files that can break gclient sync
@@ -151,9 +113,6 @@ function checkout() {
 
   # Checkout the specific revision after fetch
   gclient sync --force --revision $revision
-
-  # Cache the target OS
-  echo $target_os > $outdir/.webrtcbuilds_target_os
   popd >/dev/null
 }
 
@@ -273,130 +232,26 @@ function package::prepare() {
       popd >/dev/null
     done
 
-    # Create pkgconfig files on linux
-    if [ $platform = 'linux' ]; then
-      for cfg in $configs; do
-        mkdir -p $package_filename/lib/$TARGET_CPU/$cfg/pkgconfig
-        CONFIG=$cfg envsubst '$CONFIG' < $resource_dir/pkgconfig/libwebrtc_full.pc.in > \
-          $package_filename/lib/$TARGET_CPU/$cfg/pkgconfig/libwebrtc_full.pc
-      done
-    fi
-
-  popd >/dev/null
-}
-
-# This packages a compiled build into a archive file in the output directory.
-# $1: The platform type.
-# $2: The output directory.
-# $3: The package filename.
-function package::archive() {
-  local platform="$1"
-  local outdir="$2"
-  local package_filename="$3"
-
-  if [ $platform = 'win' ]; then
-    OUTFILE=$package_filename.7z
-  else
-    OUTFILE=$package_filename.tar.gz #.tar.bz2
-  fi
-
-  pushd $outdir >/dev/null
-
-    # Archive the package
-    rm -f $OUTFILE
-    pushd $package_filename >/dev/null
-      if [ $platform = 'win' ]; then
-        $TOOLS_DIR/win/7z/7z.exe a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on -ir!lib/$TARGET_CPU -ir!include -r ../packages/$OUTFILE
-      else
-        tar -czvf ../packages/$OUTFILE lib/$TARGET_CPU include
-        # tar cvf - lib/$TARGET_CPU include | gzip --best > ../packages/$OUTFILE
-        # zip -r $package_filename.zip $package_filename >/dev/null
-      fi
-    popd >/dev/null
-
-  popd >/dev/null
-}
-
-# Build and merge the output manifest.
-#
-# $1: The platform type.
-# $2: The output directory.
-# $3: The package filename.
-function package::manifest() {
-  local platform="$1"
-  local outdir="$2"
-  local package_filename="$3"
-
-  if [ $platform = 'win' ]; then
-    OUTFILE=$package_filename.7z
-  else
-    OUTFILE=$package_filename.tar.gz
-  fi
-
-  mkdir -p $outdir/packages
-  pushd $outdir/packages >/dev/null
-    # Create a JSON manifest
-    rm -f $package_filename.json
-    cat << EOF > $package_filename.json
-{
-  "file": "$OUTFILE",
-  "date": "$(current-rev-date)",
-  "branch": "${BRANCH}",
-  "revision": "${REVISION_NUMBER}",
-  "sha": "${REVISION}",
-  "crc": "$(file-crc $OUTFILE)",
-  "target_os": "${TARGET_OS}",
-  "target_cpu": "${TARGET_CPU}"
-}
-EOF
-
   popd >/dev/null
 }
 
 # This interprets a pattern and returns the interpreted one.
 # $1: The pattern.
-# $2: The output directory.
-# $3: The platform type.
-# $4: The target os for cross-compilation.
-# $5: The target cpu for cross-compilation.
-# $6: The branch.
-# $7: The revision.
-# $8: The revision number.
+# $2: The target os for cross-compilation.
+# $3: The target cpu for cross-compilation.
+# $4: The revision.
 function interpret-pattern() {
   local pattern="$1"
-  local platform="$2"
-  local outdir="$3"
-  local target_os="$4"
-  local target_cpu="$5"
-  local branch="$6"
-  local revision="$7"
-  local revision_number="$8"
-  local debian_arch="$(debian-arch $target_cpu)"
+  local target_os="$2"
+  local target_cpu="$3"
+  local revision="$4"
   local short_revision="$(short-rev $revision)"
 
-  pattern=${pattern//%p%/$platform}
   pattern=${pattern//%to%/$target_os}
   pattern=${pattern//%tc%/$target_cpu}
-  pattern=${pattern//%b%/$branch}
-  pattern=${pattern//%r%/$revision}
-  pattern=${pattern//%rn%/$revision_number}
-  pattern=${pattern//%da%/$debian_arch}
   pattern=${pattern//%sr%/$short_revision}
 
   echo "$pattern"
-}
-
-# Return the latest revision date from the current git repo.
-function current-rev-date() {
-  git log -1 --format=%cd
-}
-
-# Return the latest revision from the git repo.
-#
-# $1: The git repo URL
-function file-crc() {
-  local file_path="$1"
-   md5sum $file_path | grep -o '^\S*'
 }
 
 # Return the latest revision from the git repo.
@@ -427,16 +282,4 @@ function revision-number() {
 function short-rev() {
   local revision="$1"
   echo $revision | cut -c -7
-}
-
-# This returns a short revision sha.
-# $1: The target cpu for cross-compilation.
-function debian-arch() {
-  local target_cpu="$1"
-  # set PLATFORM to android on linux host to build android
-  case "$target_cpu" in
-  x86*)         echo "i386" ;;
-  x64*)         echo "amd64" ;;
-  *)            echo "$target_cpu" ;;
-  esac
 }

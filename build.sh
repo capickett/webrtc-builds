@@ -19,7 +19,6 @@ WebRTC automated build script.
 OPTIONS:
    -o OUTDIR      Output directory. Default is 'out'
    -b BRANCH      Latest revision on git branch. Overrides -r. Common branch names are 'branch-heads/nn', where 'nn' is the release number.
-   -r REVISION    Git SHA revision. Default is latest revision.
    -t TARGET OS   The target os for cross-compilation. Default is the host OS such as 'linux', 'mac', 'win'. Other values can be 'android', 'ios'.
    -c TARGET CPU  The target cpu for cross-compilation. Default is 'x64'. Other values can be 'x86', 'arm64', 'arm'.
    -d             Debug mode. Print all executed commands.
@@ -31,7 +30,6 @@ while getopts :o:b:r:t:c:l:e:n:xDd OPTION; do
   case $OPTION in
   o) OUTDIR=$OPTARG ;;
   b) BRANCH=$OPTARG ;;
-  r) REVISION=$OPTARG ;;
   t) TARGET_OS=$OPTARG ;;
   c) TARGET_CPU=$OPTARG ;;
   d) DEBUG=1 ;;
@@ -43,11 +41,8 @@ OUTDIR=${OUTDIR:-out}
 BRANCH=${BRANCH:-}
 DEBUG=${DEBUG:-0}
 CONFIGS=${CONFIGS:-Debug Release}
-PACKAGE_FILENAME_PATTERN=${PACKAGE_FILENAME_PATTERN:-"webrtc-%rn%-%sr%-%to%-%tc%"}
-PACKAGE_NAME_PATTERN=${PACKAGE_NAME_PATTERN:-"webrtc"}
-PACKAGE_VERSION_PATTERN=${PACKAGE_VERSION_PATTERN:-"%rn%"}
+PACKAGE_FILENAME_PATTERN=${PACKAGE_FILENAME_PATTERN:-"webrtc-%sr%-%to%-%tc%"}
 REPO_URL="https://webrtc.googlesource.com/src"
-DEPOT_TOOLS_URL="https://chromium.googlesource.com/chromium/tools/depot_tools.git"
 DEPOT_TOOLS_DIR=$DIR/depot_tools
 TOOLS_DIR=$DIR/tools
 PATH=$DEPOT_TOOLS_DIR:$DEPOT_TOOLS_DIR/python276_bin:$PATH
@@ -69,7 +64,7 @@ echo Checking build environment dependencies
 check::build::env $PLATFORM "$TARGET_CPU"
 
 echo Checking depot-tools
-check::depot-tools $PLATFORM $DEPOT_TOOLS_URL $DEPOT_TOOLS_DIR
+check::depot-tools $DEPOT_TOOLS_DIR
 
 if [ ! -z $BRANCH ]; then
   REVISION=$(git ls-remote $REPO_URL --heads $BRANCH | head --lines 1 | cut --fields 1) || \
@@ -85,22 +80,18 @@ REVISION_NUMBER=$(revision-number $REPO_URL $REVISION) || \
 echo "Associated revision number: $REVISION_NUMBER"
 
 echo "Checking out WebRTC revision (this will take a while): $REVISION"
-checkout "$TARGET_OS" $OUTDIR $REVISION
+checkout $OUTDIR $REVISION
 
 echo Checking WebRTC dependencies
-check::webrtc::deps $PLATFORM $OUTDIR "$TARGET_OS"
+check::webrtc::deps $PLATFORM $OUTDIR
 
 echo Compiling WebRTC
 compile $PLATFORM $OUTDIR "$TARGET_OS" "$TARGET_CPU" "$CONFIGS"
 
-# Default PACKAGE_FILENAME is <projectname>-<rev-number>-<short-rev-sha>-<target-os>-<target-cpu>
-PACKAGE_FILENAME=$(interpret-pattern "$PACKAGE_FILENAME_PATTERN" "$PLATFORM" "$OUTDIR" "$TARGET_OS" "$TARGET_CPU" "$BRANCH" "$REVISION" "$REVISION_NUMBER")
-PACKAGE_NAME=$(interpret-pattern "$PACKAGE_NAME_PATTERN" "$PLATFORM" "$OUTDIR" "$TARGET_OS" "$TARGET_CPU" "$BRANCH" "$REVISION" "$REVISION_NUMBER")
-PACKAGE_VERSION=$(interpret-pattern "$PACKAGE_VERSION_PATTERN" "$PLATFORM" "$OUTDIR" "$TARGET_OS" "$TARGET_CPU" "$BRANCH" "$REVISION" "$REVISION_NUMBER")
+# Default PACKAGE_FILENAME is <projectname>-<short-rev-sha>-<target-os>-<target-cpu>
+PACKAGE_FILENAME=$(interpret-pattern "$PACKAGE_FILENAME_PATTERN" "$TARGET_OS" "$TARGET_CPU" "$REVISION")
 
 echo "Packaging WebRTC: $PACKAGE_FILENAME"
 package::prepare $PLATFORM $OUTDIR $PACKAGE_FILENAME $DIR/resource "$CONFIGS" $REVISION_NUMBER
-package::archive $PLATFORM $OUTDIR $PACKAGE_FILENAME
-package::manifest $PLATFORM $OUTDIR $PACKAGE_FILENAME
 
 echo Build successful
