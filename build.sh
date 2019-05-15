@@ -41,15 +41,17 @@ CONFIGS=${CONFIGS:-Debug Release}
 PACKAGE_FILENAME_PATTERN=${PACKAGE_FILENAME_PATTERN:-"webrtc-%to%-%tc%"}
 REPO_URL="https://webrtc.googlesource.com/src"
 DEPOT_TOOLS_DIR=${DEPOT_TOOLS_DIR:-depot_tools}
-PATH=$DEPOT_TOOLS_DIR:$DEPOT_TOOLS_DIR/python276_bin:$PATH
 
 [ "$DEBUG" = 1 ] && set -x
 
 mkdir -p $SOURCE_DIR
-SOURCE_DIR=$(cd $SOURCE_DIR && pwd -P)
-
 mkdir -p $OUT_DIR
+
+SOURCE_DIR=$(cd $SOURCE_DIR && pwd -P)
 OUT_DIR=$(cd $OUT_DIR && pwd -P)
+DEPOT_TOOLS_DIR=$(cd $DEPOT_TOOLS_DIR && pwd -P)
+
+PATH=$DEPOT_TOOLS_DIR:$DEPOT_TOOLS_DIR/python276_bin:$PATH
 
 detect-platform
 TARGET_OS=${TARGET_OS:-$PLATFORM}
