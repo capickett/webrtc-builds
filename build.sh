@@ -24,16 +24,18 @@ OPTIONS:
 EOF
 }
 
-while getopts :o:d:xDv OPTION; do
+while getopts :s:o:d:xDv OPTION; do
   case $OPTION in
-  o) OUTDIR=$OPTARG ;;
+  s) SOURCE_DIR=$OPTARG ;;
+  o) OUT_DIR=$OPTARG ;;
   d) DEPOT_TOOLS_DIR=$OPTARG ;;
   v) DEBUG=1 ;;
   ?) usage; exit 1 ;;
   esac
 done
 
-OUTDIR=${OUTDIR:-out}
+SOURCE_DIR=${SOURCE_DIR:-src}
+OUT_DIR=${OUT_DIR:-out}
 DEBUG=${DEBUG:-0}
 CONFIGS=${CONFIGS:-Debug Release}
 PACKAGE_FILENAME_PATTERN=${PACKAGE_FILENAME_PATTERN:-"webrtc-%to%-%tc%"}
@@ -43,8 +45,11 @@ PATH=$DEPOT_TOOLS_DIR:$DEPOT_TOOLS_DIR/python276_bin:$PATH
 
 [ "$DEBUG" = 1 ] && set -x
 
-mkdir -p $OUTDIR
-OUTDIR=$(cd $OUTDIR && pwd -P)
+mkdir -p $SOURCE_DIR
+SOURCE_DIR=$(cd $SOURCE_DIR && pwd -P)
+
+mkdir -p $OUT_DIR
+OUT_DIR=$(cd $OUT_DIR && pwd -P)
 
 detect-platform
 TARGET_OS=${TARGET_OS:-$PLATFORM}
@@ -61,18 +66,18 @@ echo Checking depot-tools
 check::depot-tools $DEPOT_TOOLS_DIR
 
 echo "Checking out WebRTC (this will take a while)"
-checkout $OUTDIR
+checkout $SOURCE_DIR
 
 echo Checking WebRTC dependencies
-check::webrtc::deps $PLATFORM $OUTDIR
+check::webrtc::deps $PLATFORM $SOURCE_DIR
 
 echo Compiling WebRTC
-compile $PLATFORM $OUTDIR "$TARGET_OS" "$TARGET_CPU" "$CONFIGS"
+compile $PLATFORM $SOURCE_DIR "$TARGET_OS" "$TARGET_CPU" "$CONFIGS"
 
 # Default PACKAGE_FILENAME is <projectname>-<target-os>-<target-cpu>
 PACKAGE_FILENAME=$(interpret-pattern "$PACKAGE_FILENAME_PATTERN" "$TARGET_OS" "$TARGET_CPU")
 
 echo "Packaging WebRTC: $PACKAGE_FILENAME"
-package::prepare $PLATFORM $OUTDIR $PACKAGE_FILENAME "$CONFIGS"
+package::prepare $PLATFORM $SOURCE_DIR $OUT_DIR $PACKAGE_FILENAME "$CONFIGS"
 
 echo Build successful

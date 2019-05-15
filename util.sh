@@ -185,9 +185,10 @@ function compile() {
 # $6: The revision number.
 function package::prepare() {
   local platform="$1"
-  local outdir="$2"
-  local package_filename="$3"
-  local configs="$4"
+  local srcdir="$2"
+  local outdir="$3"
+  local package_filename="$4"
+  local configs="$5"
 
   if [ $platform = 'mac' ]; then
     CP='gcp'
@@ -195,41 +196,30 @@ function package::prepare() {
     CP='cp'
   fi
 
-  pushd $outdir >/dev/null
+  # Create directory structure
+  mkdir -p $outdir/$package_filename/include
 
-    # Create directory structure
-    mkdir -p $package_filename/include packages
-    pushd src >/dev/null
+  pushd $srcdir/src >/dev/null
+    # Copy header files, skip third_party dir
+    find . -path './third_party' -prune -o -type f \( -name '*.h' \) -print | \
+      xargs -I '{}' $CP --parent '{}' $outdir/$package_filename/include
 
-      # Find and copy header files
-      local header_source_dir=.
-
-      # Copy header files, skip third_party dir
-      find $header_source_dir -path './third_party' -prune -o -type f \( -name '*.h' \) -print | \
-        xargs -I '{}' $CP --parents '{}' $outdir/$package_filename/include
-
-      # Find and copy dependencies
-      # The following build dependencies were excluded:
-      # gflags, ffmpeg, openh264, openmax_dl, winsdk_samples, yasm
-      find $header_source_dir -name '*.h' -o -name README -o -name LICENSE -o -name COPYING | \
-        grep './third_party' | \
-        grep -E 'abseil-cpp|boringssl|expat/files|jsoncpp/source/json|libjpeg|libjpeg_turbo|libsrtp|libyuv|libvpx|opus|protobuf|usrsctp/usrsctpout/usrsctpout' | \
-        xargs -I '{}' $CP --parents '{}' $outdir/$package_filename/include
-
-    popd >/dev/null
-
-    # Find and copy libraries
-    for cfg in $configs; do
-      mkdir -p $package_filename/lib/$TARGET_CPU/$cfg
-      pushd src/out/$TARGET_CPU/$cfg >/dev/null
-        mkdir -p $outdir/$package_filename/lib/$TARGET_CPU/$cfg
-        find . -name '*.so' -o -name '*.dll' -o -name '*.lib' -o -name '*.a' -o -name '*.jar' | \
-          grep -E 'webrtc\.|boringssl|protobuf|system_wrappers' | \
-          xargs -I '{}' $CP '{}' $outdir/$package_filename/lib/$TARGET_CPU/$cfg
-      popd >/dev/null
-    done
-
+    # Find and copy dependencies
+    # The following build dependencies were excluded:
+    # gflags, ffmpeg, openh264, openmax_dl, winsdk_samples, yasm
+    find . -name '*.h' -o -name README -o -name LICENSE -o -name COPYING | \
+      grep './third_party' | \
+      grep -E 'abseil-cpp|boringssl|expat/files|jsoncpp/source/json|libjpeg|libjpeg_turbo|libsrtp|libyuv|libvpx|opus|protobuf|usrsctp/usrsctpout/usrsctpout' | \
+      xargs -I '{}' $CP --parent '{}' $outdir/$package_filename/include
   popd >/dev/null
+
+  # Find and copy libraries
+  for cfg in $configs; do
+    mkdir -p $outdir/$package_filename/lib/$TARGET_CPU/$cfg
+    find $srcdir/src/out/$TARGET_CPU/$cfg -name '*.so' -o -name '*.dll' -o -name '*.lib' -o -name '*.a' -o -name '*.jar' | \
+      grep -E 'webrtc\.|boringssl|protobuf|system_wrappers' | \
+      xargs -I '{}' $CP '{}' $outdir/$package_filename/lib/$TARGET_CPU/$cfg
+  done
 }
 
 # This interprets a pattern and returns the interpreted one.
