@@ -96,7 +96,6 @@ function check::webrtc::deps() {
 # $2: Revision represented as a git SHA.
 function checkout() {
   local outdir="$1"
-  local revision="$2"
 
   pushd $outdir >/dev/null
   # Fetch only the first-time, otherwise sync.
@@ -112,8 +111,7 @@ function checkout() {
   git clean -f
   popd >/dev/null
 
-  # Checkout the specific revision after fetch
-  gclient sync --force --revision $revision
+  gclient sync --force
   popd >/dev/null
 }
 
@@ -243,12 +241,9 @@ function interpret-pattern() {
   local pattern="$1"
   local target_os="$2"
   local target_cpu="$3"
-  local revision="$4"
-  local short_revision="$(short-rev $revision)"
 
   pattern=${pattern//%to%/$target_os}
   pattern=${pattern//%tc%/$target_cpu}
-  pattern=${pattern//%sr%/$short_revision}
 
   echo "$pattern"
 }
