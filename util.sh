@@ -98,20 +98,20 @@ function checkout() {
   local outdir="$1"
 
   pushd $outdir >/dev/null
-  # Fetch only the first-time, otherwise sync.
-  if [ ! -d src ]; then
-    echo Missing source directory
-    exit 1
-  fi
+    # Fetch only the first-time, otherwise sync.
+    if [ ! -d src ]; then
+      echo Missing source directory
+      exit 1
+    fi
 
-  # Remove all unstaged files that can break gclient sync
-  # NOTE: need to redownload resources
-  pushd src >/dev/null
-  # git reset --hard
-  git clean -f
-  popd >/dev/null
+    # Remove all unstaged files that can break gclient sync
+    # NOTE: need to redownload resources
+    pushd src >/dev/null
+      # git reset --hard
+      git clean -f
+    popd >/dev/null
 
-  gclient sync --force
+    gclient sync --force
   popd >/dev/null
 }
 
